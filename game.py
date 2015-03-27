@@ -8,21 +8,47 @@ class MovePattern(object):
 
 	def compute(self,init_pos,white,board):
 		if not self.propagates:
+			#get all possible pos
 			hypo = [[init_pos[0]+move[0],init_pos[1]+move[1]] for move in self.pattern]
-			return [[x,y] for x,y in hypo if x in range(8) and y in range(8)]
+			#remove the ones that are out of the board
+			hypo_in_range = [[x,y] for x,y in hypo if x in range(8) and y in range(8)]
+			final = []
+			#remove the ones that clash on a friendly piece
+			for pos in hypo_in_range:
+				keeping = True
+				for piece in board.pieces:
+					if not piece.dead and piece.white == white and piece.pos == pos:
+						keeping = False
+				if keeping: final.append(pos)
+			return final
 		else:
 			hypo = []
 			for move in self.pattern:
+				#for each possible move
+				#create a buffer position, initiated at the piece's position
 				buffer_pos = init_pos
 				while buffer_pos[0] in range(8) and buffer_pos[1] in range(8):
-					if buffer_pos[0] == init_pos[0] and buffer_pos[1] == init_pos[1]: 
+					#while the buffer is still inside the board
+					#if the buffer is at the original position, move it
+					if buffer_pos == init_pos: 
 						buffer_pos = [buffer_pos[0]+move[0],buffer_pos[1]+move[1]]
 						continue
+					breaking = False
 					for piece in board.pieces:
-						if piece.pos[0]==buffer_pos[0] and piece.pos[1]==buffer_pos[1] and piece.white==white: break
+						#if buffer arrives at a friendly piece's location, stop
+						if piece.pos == buffer_pos and piece.white==white and not piece.dead: 
+							breaking=True
+							break
+					if breaking: break
+					#add this position to the list
 					hypo.append(buffer_pos)
 					for piece in board.pieces:
-						if piece.pos[0]==buffer_pos[0] and piece.pos[1]==buffer_pos[1] and piece.white!=white: break
+						#if buffer arrives at an opponent's piece location, stop
+						if piece.pos == buffer_pos and piece.white!=white: 
+							breaking=True
+							break
+					if breaking: break
+					#otherwise, iterate buffer
 					buffer_pos = [buffer_pos[0]+move[0],buffer_pos[1]+move[1]]
 			return hypo
 
@@ -115,7 +141,7 @@ class Board(object):
 		origin = piece.pos
 		for move in hypo:
 			piece.fake_move(move,self)
-			if not self.isCheck: restricted_moves.append(move)
+			if not self.isCheck(): restricted_moves.append(move)
 			piece.cancel_fake_move(self)
 		return restricted_moves
 
@@ -140,10 +166,11 @@ class Board(object):
 		if wrongStart: return False
 		possible_moves = piece.getMoves(self)
 		extended_moves = self.expandMoves()
+		#pdb.set_trace()
 		restricted_moves = self.restrictMoves(piece,possible_moves+extended_moves)
 		#Implement "roque" exception here? If piece is a king extend its moves
 		#Also we need to check if we are in a check situation
-		return pos_to in possible_moves
+		return pos_to in restricted_moves
 
 	def execute(self,pos_from,pos_to):
 		#here we assume move is legit
