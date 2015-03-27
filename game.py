@@ -1,4 +1,4 @@
-
+import pdb
 
 class MovePattern(object):
 
@@ -24,6 +24,7 @@ class MovePattern(object):
 					for piece in board.pieces:
 						if piece.pos[0]==buffer_pos[0] and piece.pos[1]==buffer_pos[1] and piece.white!=white: break
 					buffer_pos = [buffer_pos[0]+move[0],buffer_pos[1]+move[1]]
+			return hypo
 
 
 
@@ -86,29 +87,84 @@ class Board(object):
 
 		return [wking,wqueen,wbishop1,wbishop2,wknight2,wknight1,wtower2,wtower1,wpawn8,wpawn7,wpawn6,wpawn5,wpawn4,wpawn3,wpawn2,wpawn1,bking,bqueen,bbishop2,bbishop1,bknight2,bknight1,btower2,btower1,bpawn8,bpawn7,bpawn6,bpawn5,bpawn4,bpawn3,bpawn2,bpawn1]
 
+	def isCheck(self):
+		#returns true if there is check, false otherwise
+
+		#get the king
+		for piece in self.pieces:
+			if piece.white == self.whitePlaying and piece.name == 'king':
+				king_pos = piece.pos
+				break
+
+		#then cycle through every opponent's piece and find if one can get the king
+		for piece in self.pieces:
+			if piece.white != self.whitePlaying and not piece.dead:
+				possible_moves = piece.getMoves(self)
+				for move in possible_moves:
+					if move==king_pos: return True
+		return False
+
+	def expandMoves(self):
+		#implement rocke, small rocke and en passant
+		return []
+
+
+	def restrictMoves(self,piece,hypo):
+		#If there is check, restrict moves
+		restricted_moves = []
+		origin = piece.pos
+		for move in hypo:
+			piece.fake_move(move,self)
+			if not self.isCheck: restricted_moves.append(move)
+			piece.cancel_fake_move(self)
+		return restricted_moves
+
+
+	def promote(self):
+		#promote pawns that have reached the last line
+		for i,piece in enumerate(self.pieces):
+			if piece.name == 'pawn' and piece.pos[1] in (0,7):	self.pieces[i] = Queen(piece.pos,piece.white)
+
+
+
 	def isLegit(self,pos_from,pos_to):
 		wrongStart = True
 		for piece in self.pieces:
-			if piece.pos == pos_from and piece.white!=self.whitePlaying: return False
-			elif piece.pos == pos_from: 
+			#If that's an opponent's piece
+			if piece.pos == pos_from and piece.white!=self.whitePlaying and not piece.dead: return False
+			#If that's one of the player's piece
+			elif piece.pos == pos_from and not piece.dead: 
 				wrongStart = False
 				break
+		#If this place is empty
 		if wrongStart: return False
-		possibleMoves = piece.getMoves(self)
+		possible_moves = piece.getMoves(self)
+		extended_moves = self.expandMoves()
+		restricted_moves = self.restrictMoves(piece,possible_moves+extended_moves)
 		#Implement "roque" exception here? If piece is a king extend its moves
 		#Also we need to check if we are in a check situation
-		return pos_to in possibleMoves
+		return pos_to in possible_moves
 
 	def execute(self,pos_from,pos_to):
 		#here we assume move is legit
 		for piece in self.pieces:
-			if piece.pos == pos_from: break
-		piece.move(pos_to)
+			if piece.pos == pos_from and not piece.dead: break
+		piece.move(pos_to,self)
+		self.promote()
 		self.whitePlaying = not self.whitePlaying
 
+	def checkSyntax(self,command):
+		if command[0].lower() not in ['a','b','c','d','e','f','g','h']: return False
+		if command[1] not in ['1','2','3','4','5','6','7','8']: return False
+		if command[2].lower() not in ['a','b','c','d','e','f','g','h']: return False
+		if command[3] not in ['1','2','3','4','5','6','7','8']: return False
+		return True
+
 	def parse(self,command):
-		pos_from = [self.letterToInt[command[0]],int(command[1])]
-		pos_to = [self.letterToInt[command[2]],int(command[3])]
+		if not self.checkSyntax(command): return False
+
+		pos_from = [self.letterToInt[command[0]],int(command[1])-1]
+		pos_to = [self.letterToInt[command[2]],int(command[3])-1]
 
 		legit = self.isLegit(pos_from,pos_to)
 
@@ -117,6 +173,21 @@ class Board(object):
 		self.execute(pos_from,pos_to)
 		return True
 
+	def genDisplayString(self):
+		nameToSymbol = {
+		'king':'k',
+		'queen':'q',
+		'bishop':'b',
+		'knight':'h',
+		'tower':'t',
+		'pawn':'p'
+		}
+		dispMat=[[' ' for x in range(8)] for y in range(8)]
+		for piece in self.pieces:
+			if not piece.dead:
+				dispMat[piece.pos[1]][piece.pos[0]] = nameToSymbol[piece.name]
+		return '---------------------------------\n| '+' |\n---------------------------------\n| '.join([' | '.join(x) for x in dispMat]) + ' |\n---------------------------------\n'
+
 
 class Piece(object):
 
@@ -124,9 +195,30 @@ class Piece(object):
 		self.move_pattern = move_pattern
 		self.pos = pos
 		self.white = white
+		self.dead = False
+		self.killed = None
 
-	def move(self,pos):
+	def move(self,pos,board):
+		for piece in board.pieces:
+			if piece.pos == pos and not piece.dead: 
+				piece.dead=True
+				break
 		self.pos = pos
+
+	def fake_move(self,pos,board):
+		for piece in board.pieces:
+			if piece.pos == pos and piece.white != self.white and not piece.dead: 
+				piece.dead=True
+				self.killed = piece
+				break
+		self.prevPos = self.pos
+		self.pos = pos
+
+	def cancel_fake_move(self,board):
+		self.pos = self.prevPos
+		if self.killed is not None:
+			self.killed.dead = False
+			self.killed = None
 
 
 
@@ -135,7 +227,8 @@ class King(Piece):
 	move_pattern = MovePattern([[1,1],[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1],[0,1]],False)
 
 	def __init__(self,pos,white):
-		super(King,self).__init__(pos,white,self.move_pattern)
+		self.name='king'
+		super(King,self).__init__(pos,white,self.move_pattern,)
 
 	def getMoves(self,board):
 		return self.move_pattern.compute(self.pos,self.white,board)
@@ -145,6 +238,7 @@ class Queen(Piece):
 	move_pattern = MovePattern([[1,1],[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1],[0,1]],True)
 
 	def __init__(self,pos,white):
+		self.name='queen'
 		super(Queen,self).__init__(pos,white,self.move_pattern)
 
 	def getMoves(self,board):
@@ -155,6 +249,7 @@ class Bishop(Piece):
 	move_pattern = MovePattern([[1,1],[1,-1],[-1,-1],[-1,1]],True)
 
 	def __init__(self,pos,white):
+		self.name='bishop'
 		super(Bishop,self).__init__(pos,white,self.move_pattern)
 
 	def getMoves(self,board):
@@ -165,6 +260,7 @@ class Tower(Piece):
 	move_pattern = MovePattern([[1,0],[0,-1],[-1,0],[0,1]],True)
 
 	def __init__(self,pos,white):
+		self.name='tower'
 		super(Tower,self).__init__(pos,white,self.move_pattern)
 
 	def getMoves(self,board):
@@ -175,6 +271,7 @@ class Knight(Piece):
 	move_pattern = MovePattern([[1,2],[1,-2],[2,1],[2,-1],[-1,2],[-1,-2],[-2,1],[-2,-1]],False)
 
 	def __init__(self,pos,white):
+		self.name='knight'
 		super(Knight,self).__init__(pos,white,self.move_pattern)
 
 	def getMoves(self,board):
@@ -183,6 +280,7 @@ class Knight(Piece):
 class Pawn(Piece):
 
 	def __init__(self,pos,white,north):
+		self.name='pawn'
 		self.north = north
 		super(Pawn,self).__init__(pos,white)
 
@@ -209,6 +307,7 @@ class Pawn(Piece):
 def run():
 	board = Board()
 	while(True):
+		print board.genDisplayString()
 		x = raw_input()
 		result = board.parse(x)
 		print "Legit" if result else "not Legit"
